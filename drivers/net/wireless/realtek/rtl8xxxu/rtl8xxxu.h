@@ -1942,15 +1942,19 @@ struct rtl8xxxu_vif {
 };
 
 struct rtl8xxxu_rx_urb {
-	struct urb urb;
 	struct ieee80211_hw *hw;
 	struct list_head list;
+
+	/* Must be last as it ends in a flexible-array member. */
+	struct urb urb;
 };
 
 struct rtl8xxxu_tx_urb {
-	struct urb urb;
 	struct ieee80211_hw *hw;
 	struct list_head list;
+
+	/* Must be last as it ends in a flexible-array member. */
+	struct urb urb;
 };
 
 struct rtl8xxxu_fileops {
