@@ -3058,9 +3058,13 @@ static int rtw89_pci_ops_deinit(struct rtw89_dev *rtwdev)
 
 	if (rtwdev->chip->chip_id == RTL8852A) {
 		/* ltr sw trigger */
-		rtw89_write32_set(rtwdev, R_AX_LTR_CTRL_0, B_AX_APP_LTR_IDLE);
+		if (!test_bit(RTW89_QUIRK_PCI_DISABLE_LINK_FEATURES,
+			      rtwdev->quirks))
+			rtw89_write32_set(rtwdev, R_AX_LTR_CTRL_0,
+					  B_AX_APP_LTR_IDLE);
 	}
-	info->ltr_set(rtwdev, false);
+	if (!test_bit(RTW89_QUIRK_PCI_DISABLE_LINK_FEATURES, rtwdev->quirks))
+		info->ltr_set(rtwdev, false);
 	rtw89_pci_ctrl_dma_all(rtwdev, false);
 	rtw89_pci_clr_idx_all(rtwdev);
 
@@ -3241,14 +3245,16 @@ static int rtw89_pci_ops_mac_post_init_ax(struct rtw89_dev *rtwdev)
 	enum rtw89_core_chip_id chip_id = rtwdev->chip->chip_id;
 	int ret;
 
-	ret = info->ltr_set(rtwdev, true);
-	if (ret) {
-		rtw89_err(rtwdev, "pci ltr set fail\n");
-		return ret;
-	}
-	if (chip_id == RTL8852A) {
-		/* ltr sw trigger */
-		rtw89_write32_set(rtwdev, R_AX_LTR_CTRL_0, B_AX_APP_LTR_ACT);
+	if (!test_bit(RTW89_QUIRK_PCI_DISABLE_LINK_FEATURES, rtwdev->quirks)) {
+		ret = info->ltr_set(rtwdev, true);
+		if (ret) {
+			rtw89_err(rtwdev, "pci ltr set fail\n");
+			return ret;
+		}
+		if (chip_id == RTL8852A) {
+			/* ltr sw trigger */
+			rtw89_write32_set(rtwdev, R_AX_LTR_CTRL_0, B_AX_APP_LTR_ACT);
+		}
 	}
 	if (chip_id == RTL8852A || rtw89_is_rtl885xb(rtwdev)) {
 		/* ADDR info 8-byte mode */
@@ -4164,7 +4170,8 @@ static void rtw89_pci_clkreq_set(struct rtw89_dev *rtwdev, bool enable)
 	const struct rtw89_pci_info *info = rtwdev->pci_info;
 	const struct rtw89_pci_gen_def *gen_def = info->gen_def;
 
-	if (rtw89_pci_disable_clkreq)
+	if (rtw89_pci_disable_clkreq ||
+	    test_bit(RTW89_QUIRK_PCI_DISABLE_LINK_FEATURES, rtwdev->quirks))
 		return;
 
 	gen_def->clkreq_set(rtwdev, enable);
@@ -4209,7 +4216,8 @@ static void rtw89_pci_aspm_set(struct rtw89_dev *rtwdev, bool enable)
 	const struct rtw89_pci_info *info = rtwdev->pci_info;
 	const struct rtw89_pci_gen_def *gen_def = info->gen_def;
 
-	if (rtw89_pci_disable_aspm_l1)
+	if (rtw89_pci_disable_aspm_l1 ||
+	    test_bit(RTW89_QUIRK_PCI_DISABLE_LINK_FEATURES, rtwdev->quirks))
 		return;
 
 	gen_def->aspm_set(rtwdev, enable);
@@ -4320,7 +4328,8 @@ static void rtw89_pci_l1ss_set(struct rtw89_dev *rtwdev, bool enable)
 	const struct rtw89_pci_info *info = rtwdev->pci_info;
 	const struct rtw89_pci_gen_def *gen_def = info->gen_def;
 
-	if (rtw89_pci_disable_l1ss)
+	if (rtw89_pci_disable_l1ss ||
+	    test_bit(RTW89_QUIRK_PCI_DISABLE_LINK_FEATURES, rtwdev->quirks))
 		return;
 
 	gen_def->l1ss_set(rtwdev, enable);
@@ -4364,7 +4373,8 @@ static void rtw89_pci_l1ss_cfg(struct rtw89_dev *rtwdev)
 	struct pci_dev *pdev = rtwpci->pdev;
 	u32 l1ss_cap_ptr, l1ss_ctrl;
 
-	if (rtw89_pci_disable_l1ss)
+	if (rtw89_pci_disable_l1ss ||
+	    test_bit(RTW89_QUIRK_PCI_DISABLE_LINK_FEATURES, rtwdev->quirks))
 		return;
 
 	l1ss_cap_ptr = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_L1SS);

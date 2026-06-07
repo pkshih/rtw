@@ -18,6 +18,18 @@ static const struct rtw89_pci_bd_idx_addr rtw8852c_bd_idx_addr_low_power = {
 	.rx_bd_addrs = {R_AX_DRV_FW_HSK_6, R_AX_DRV_FW_HSK_7},
 };
 
+static const struct rtw89_pci_ssid_quirk rtw8852c_pci_ssid_quirks[] = {
+	{
+		.vendor = PCI_VENDOR_ID_REALTEK,
+		.device = 0xc852,
+		.subsystem_vendor = 0x105b,
+		.subsystem_device = 0xe110,
+		.bitmap = BIT(RTW89_QUIRK_PCI_BER) |
+			  BIT(RTW89_QUIRK_PCI_DISABLE_LINK_FEATURES),
+	},
+	{},
+};
+
 static const struct rtw89_pci_info rtw8852c_pci_info = {
 	.gen_def		= &rtw89_pci_gen_ax,
 	.isr_def		= &rtw89_pci_isr_ax,
@@ -73,7 +85,7 @@ static const struct rtw89_pci_info rtw8852c_pci_info = {
 	.disable_intr		= rtw89_pci_disable_intr_v1,
 	.recognize_intrs	= rtw89_pci_recognize_intrs_v1,
 
-	.ssid_quirks		= NULL,
+	.ssid_quirks		= rtw8852c_pci_ssid_quirks,
 };
 
 static const struct dmi_system_id rtw8852c_pci_quirks[] = {
