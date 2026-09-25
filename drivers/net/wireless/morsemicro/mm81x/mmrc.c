@@ -2,6 +2,8 @@
 /*
  * Copyright (c) 2017-2026 Morse Micro
  */
+#include <linux/bitops.h>
+
 #include "mmrc.h"
 
 /*
@@ -199,22 +201,6 @@
 static const u32 sym_table[10] = { 24, 36, 48, 72, 96, 144, 192, 216, 256, 288 };
 
 /*
- * Calculate which bit is the nth bit set in an integer based flag.
- */
-static u8 nth_bit(u16 in, u16 index)
-{
-	u32 i;
-	u8 count = 0;
-
-	for (i = 0; count != index + 1; i++) {
-		if (((1u << i) & in) != 0)
-			count++;
-	}
-
-	return i - 1;
-}
-
-/*
  * Calculate the input bit's index among all the set bits in an integer
  * based flag.
  */
@@ -291,19 +277,19 @@ static struct mmrc_rate get_rate_row(struct mmrc_table *tb, u16 index)
 	u16 mcs_index = index / rows;
 	u16 mcs_modulo = index % rows;
 
-	mcs = nth_bit(tb->caps.rates, mcs_index);
+	mcs = fns(tb->caps.rates, mcs_index);
 
 	/* Find our spatial stream */
 	rows = rows / streams;
-	streams = nth_bit(tb->caps.spatial_streams, mcs_modulo / rows);
+	streams = fns(tb->caps.spatial_streams, mcs_modulo / rows);
 
 	/* Find our bandwidth */
 	ss_index = index % rows;
 	rows = rows / bw;
-	bw = nth_bit(tb->caps.bandwidth, ss_index / rows);
+	bw = fns(tb->caps.bandwidth, ss_index / rows);
 
 	/* Find our guard */
-	guard = nth_bit(tb->caps.guard, index % guard);
+	guard = fns(tb->caps.guard, index % guard);
 
 	/* Add range checks to keep scan-build happy */
 	if (bw >= MMRC_BW_MAX)
