@@ -206,13 +206,7 @@ static const u32 sym_table[10] = { 24, 36, 48, 72, 96, 144, 192, 216, 256, 288 }
  */
 static u16 bit_index(u16 in, u32 bit_pos)
 {
-	u16 i;
-	u16 index = 0;
-
-	for (i = 0; i != bit_pos + 1; i++) {
-		if (((1u << i) & in) != 0)
-			index++;
-	}
+	u16 index = hweight16(in & GENMASK(bit_pos, 0));
 
 	if (index == 0) {
 		/* Could not match bit pos to caps */
