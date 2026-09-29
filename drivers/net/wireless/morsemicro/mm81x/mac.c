@@ -1355,11 +1355,10 @@ static void mm81x_mac_beacon_work(struct work_struct *work)
 		mm81x_mac_send_buffered_bc(mors, vif);
 }
 
-static void mm81x_mac_beacon_init(struct mm81x_vif *mors_vif)
+static void mm81x_mac_beacon_start(struct mm81x_vif *mors_vif)
 {
 	struct mm81x *mors = mm81x_vif_to_mors(mors_vif);
 
-	INIT_WORK(&mors_vif->u.ap.beacon_work, mm81x_mac_beacon_work);
 	mm81x_mac_beacon_irq_enable(mors_vif, true);
 	atomic_inc(&mors->num_bcn_vifs);
 }
@@ -1582,7 +1581,9 @@ static void mm81x_mac_ops_bss_info_changed(struct ieee80211_hw *hw,
 		mm81x_cmd_config_beacon_timer(mors, mors_vif,
 					      info->enable_beacon);
 
-		if (!info->enable_beacon)
+		if (info->enable_beacon)
+			mm81x_mac_beacon_start(mors_vif);
+		else
 			mm81x_mac_beacon_finish(mors_vif);
 	}
 
@@ -2260,7 +2261,7 @@ static int mm81x_mac_ops_add_interface(struct ieee80211_hw *hw,
 	rcu_assign_pointer(mors->vifs[mors_vif->id], vif);
 
 	if (vif->type == NL80211_IFTYPE_AP)
-		mm81x_mac_beacon_init(mors_vif);
+		INIT_WORK(&mors_vif->u.ap.beacon_work, mm81x_mac_beacon_work);
 
 	ret = mm81x_cmd_get_capabilities(mors, mors_vif->id, &mors->fw_caps);
 	if (ret) {
