@@ -1836,6 +1836,8 @@ static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
 		}
 		break;
 	case NETDEV_GOING_DOWN:
+		scoped_guard(wiphy, &rdev->wiphy)
+			wdev->is_running = false;
 		cfg80211_leave(rdev, wdev, -1);
 		scoped_guard(wiphy, &rdev->wiphy) {
 			cfg80211_remove_links(wdev);
@@ -1866,6 +1868,7 @@ static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
 		break;
 	case NETDEV_UP:
 		wiphy_lock(&rdev->wiphy);
+		wdev->is_running = true;
 		cfg80211_update_iface_num(rdev, wdev->iftype, 1);
 		switch (wdev->iftype) {
 #ifdef CONFIG_CFG80211_WEXT
