@@ -7,6 +7,7 @@
 #include <linux/jiffies.h>
 #include <linux/crc32.h>
 #include <net/mac80211.h>
+#include <net/ieee80211_radiotap.h>
 #include <asm/div64.h>
 #include <linux/kernel.h>
 #include "hif.h"
@@ -1400,6 +1401,9 @@ static void mm81x_mac_ops_remove_interface(struct ieee80211_hw *hw,
 		dev_err(mors->dev, "mm81x_cmd_rm_if failed %d", ret);
 
 	RCU_INIT_POINTER(mors->vifs[mors_vif->id], NULL);
+
+	if (vif->type == NL80211_IFTYPE_MONITOR)
+		__clear_bit(IEEE80211_HW_RX_INCLUDES_FCS, hw->flags);
 }
 
 static s32 mm81x_mac_get_max_txpower(struct mm81x *mors)
@@ -1514,6 +1518,9 @@ static int mm81x_mac_ops_config(struct ieee80211_hw *hw, int radio_idx,
 			return ret;
 	}
 
+	if (changed & IEEE80211_CONF_CHANGE_MONITOR)
+		mors->monitor_en = conf->flags & IEEE80211_CONF_MONITOR;
+
 	if ((changed & IEEE80211_CONF_CHANGE_POWER) &&
 	    !(changed & IEEE80211_CONF_CHANGE_CHANNEL) &&
 	    !(conf->flags & IEEE80211_CONF_MONITOR)) {
@@ -1605,7 +1612,7 @@ static u64 mm81x_mac_ops_prepare_multicast(struct ieee80211_hw *hw,
 					   struct netdev_hw_addr_list *mc_list)
 {
 	struct mm81x *mors = hw->priv;
-	struct mcast_filter *filter;
+	struct mm81x_mcast_filter *filter;
 	struct netdev_hw_addr *addr;
 	u16 addr_count = netdev_hw_addr_list_count(mc_list);
 	u16 len = sizeof(*filter) + addr_count * sizeof(filter->addr_list[0]);
@@ -1632,17 +1639,38 @@ static u64 mm81x_mac_ops_prepare_multicast(struct ieee80211_hw *hw,
 	return (u64)(unsigned long)filter;
 }
 
+static void mm81x_mc_iface_iterator(void *data, u8 *mac,
+				    struct ieee80211_vif *vif)
+{
+	struct mm81x_vif *mors_vif = ieee80211_vif_to_mors_vif(vif);
+	struct mm81x *mors = data;
+	int ret;
+
+	if (vif->type == NL80211_IFTYPE_MONITOR)
+		return;
+
+	ret = mm81x_cmd_cfg_multicast_filter(mors, mors_vif);
+	if (ret)
+		dev_err(mors->dev, "Multicast filtering failed - rc=%d", ret);
+}
+
+#define MM81X_MONITOR_FILTERS		\
+	(FIF_ALLMULTI |			\
+	FIF_BCN_PRBRESP_PROMISC |	\
+	FIF_CONTROL |			\
+	FIF_FCSFAIL |			\
+	FIF_OTHER_BSS |			\
+	FIF_PSPOLL |			\
+	FIF_PROBE_REQ |			\
+	FIF_MCAST_ACTION)
+
 static void mm81x_mac_ops_configure_filter(struct ieee80211_hw *hw,
 					   unsigned int changed_flags,
 					   unsigned int *total_flags,
 					   u64 multicast)
 {
+	struct mm81x_mcast_filter *cmd = (void *)(unsigned long)multicast;
 	struct mm81x *mors = hw->priv;
-	struct mcast_filter *cmd = (void *)(unsigned long)multicast;
-	struct mm81x_vif *mors_vif = NULL;
-	struct ieee80211_vif *vif = NULL;
-	int vif_id = 0;
-	int ret = 0;
 
 	if (!cmd)
 		goto out;
@@ -1650,25 +1678,15 @@ static void mm81x_mac_ops_configure_filter(struct ieee80211_hw *hw,
 	kfree(mors->mcast_filter);
 	mors->mcast_filter = cmd;
 
-	for (vif_id = 0; vif_id < ARRAY_SIZE(mors->vifs); vif_id++) {
-		vif = mm81x_rcu_dereference_vif_id(mors, vif_id, false);
-		if (!vif)
-			continue;
-
-		mors_vif = ieee80211_vif_to_mors_vif(vif);
-
-		ret = mm81x_cmd_cfg_multicast_filter(mors, mors_vif);
-		if (!ret)
-			continue;
-
-		dev_err(mors->dev, "Multicast filtering failed - rc=%d", ret);
-		mors->mcast_filter = NULL;
-		kfree(cmd);
-		break;
-	}
+	ieee80211_iterate_active_interfaces(mors->hw,
+					    IEEE80211_IFACE_ITER_NORMAL,
+					    mm81x_mc_iface_iterator, mors);
 
 out:
-	*total_flags &= 0;
+	if (mors->monitor_en)
+		*total_flags &= MM81X_MONITOR_FILTERS;
+	else
+		*total_flags = 0;
 }
 
 static int mm81x_mac_ops_conf_tx(struct ieee80211_hw *hw,
@@ -1906,14 +1924,95 @@ static u8 mm81x_rx_h_rc_bw_to_rx_bw(__le32 ratecode)
 	}
 }
 
+static u32 mm81x_rx_h_ampdu_reference(struct mm81x *mors, u64 timestamp)
+{
+	if (timestamp != mors->rx_ampdu.timestamp) {
+		mors->rx_ampdu.timestamp = timestamp;
+		mors->rx_ampdu.reference++;
+	}
+
+	return mors->rx_ampdu.reference;
+}
+
+static enum ieee80211_radiotap_s1g_ppdu_format
+mm81x_rx_h_ppdu_format(__le32 ratecode)
+{
+	switch (mm81x_ratecode_preamble_get(ratecode)) {
+	case MM81X_RATE_PREAMBLE_S1G_1M:
+		return IEEE80211_RADIOTAP_S1G_PPDU_FORMAT_1M;
+	case MM81X_RATE_PREAMBLE_S1G_LONG:
+		return IEEE80211_RADIOTAP_S1G_PPDU_FORMAT_LONG;
+	default:
+		return IEEE80211_RADIOTAP_S1G_PPDU_FORMAT_SHORT;
+	}
+}
+
+#define S1G_RADIOTAP_TLV_LEN				\
+	(sizeof(struct ieee80211_radiotap_tlv) +	\
+	 ALIGN(sizeof(struct ieee80211_radiotap_s1g), 4))
+
+static void mm81x_rx_h_add_rt_s1g_tlv(struct sk_buff *skb,
+				      struct mm81x_skb_rx_status *hdr_rx_status,
+				      struct ieee80211_rx_status *rx_status)
+{
+	__le32 ratecode = hdr_rx_status->mm81x_ratecode;
+	u32 flags = le32_to_cpu(hdr_rx_status->flags);
+	u8 color = hdr_rx_status->bss_color;
+	struct ieee80211_radiotap_tlv *tlv;
+	struct ieee80211_radiotap_s1g s1g;
+
+	if (skb_headroom(skb) < S1G_RADIOTAP_TLV_LEN)
+		return;
+
+	s1g.known = cpu_to_le16(IEEE80211_RADIOTAP_S1G_KNOWN_PPDU_FORMAT |
+				IEEE80211_RADIOTAP_S1G_KNOWN_RESPONSE_IND |
+				IEEE80211_RADIOTAP_S1G_KNOWN_GI |
+				IEEE80211_RADIOTAP_S1G_KNOWN_BW |
+				IEEE80211_RADIOTAP_S1G_KNOWN_UPLINK_IND |
+				IEEE80211_RADIOTAP_S1G_KNOWN_NSS |
+				IEEE80211_RADIOTAP_S1G_KNOWN_MCS |
+				IEEE80211_RADIOTAP_S1G_KNOWN_COLOR);
+
+	s1g.data1 = le16_encode_bits(mm81x_rx_h_ppdu_format(ratecode),
+				     IEEE80211_RADIOTAP_S1G_DATA1_PPDU_FORMAT) |
+		    le16_encode_bits(MM81X_RX_STATUS_FLAGS_RI_GET(flags),
+				     IEEE80211_RADIOTAP_S1G_DATA1_RESPONSE_IND) |
+		    le16_encode_bits(mm81x_ratecode_sgi_get(ratecode),
+				     IEEE80211_RADIOTAP_S1G_DATA1_GI) |
+		    le16_encode_bits(mm81x_ratecode_nss_index_get(ratecode),
+				     IEEE80211_RADIOTAP_S1G_DATA1_NSS) |
+		    le16_encode_bits(mm81x_ratecode_bw_index_get(ratecode),
+				     IEEE80211_RADIOTAP_S1G_DATA1_BW) |
+		    le16_encode_bits(mm81x_ratecode_mcs_index_get(ratecode),
+				     IEEE80211_RADIOTAP_S1G_DATA1_MCS);
+
+	s1g.data2 = le16_encode_bits(color, IEEE80211_RADIOTAP_S1G_DATA2_COLOR) |
+		    le16_encode_bits(MM81X_RX_STATUS_FLAGS_UPL_IND_GET(flags),
+				     IEEE80211_RADIOTAP_S1G_DATA2_UPLINK_IND) |
+		    le16_encode_bits((u8)rx_status->signal,
+				     IEEE80211_RADIOTAP_S1G_DATA2_RSSI);
+
+	tlv = skb_push(skb, S1G_RADIOTAP_TLV_LEN);
+	tlv->type = cpu_to_le16(IEEE80211_RADIOTAP_S1G);
+	tlv->len = cpu_to_le16(sizeof(s1g));
+
+	memcpy(tlv->data, &s1g, sizeof(s1g));
+	memset(tlv->data + sizeof(s1g), 0,
+	       S1G_RADIOTAP_TLV_LEN - sizeof(*tlv) - sizeof(s1g));
+
+	skb_set_mac_header(skb, S1G_RADIOTAP_TLV_LEN);
+	rx_status->flag |= RX_FLAG_RADIOTAP_TLV_AT_END;
+}
+
 static void mm81x_rx_h_fill_status(struct mm81x *mors,
 				   struct mm81x_skb_rx_status *hdr_rx_status,
 				   struct ieee80211_rx_status *rx_status,
 				   struct sk_buff *skb)
 {
-	u32 flags = le32_to_cpu(hdr_rx_status->flags);
+	u64 timestamp = le64_to_cpu(hdr_rx_status->rx_timestamp_us);
 	u16 freq_100khz = le16_to_cpu(hdr_rx_status->freq_100khz);
 	__le32 ratecode = hdr_rx_status->mm81x_ratecode;
+	u32 flags = le32_to_cpu(hdr_rx_status->flags);
 
 	rx_status->signal = le16_to_cpu(hdr_rx_status->rssi);
 	rx_status->encoding = RX_ENC_S1G;
@@ -1921,15 +2020,51 @@ static void mm81x_rx_h_fill_status(struct mm81x *mors,
 	rx_status->freq = KHZ100_TO_MHZ(freq_100khz);
 	rx_status->freq_offset = (freq_100khz % 10) ? 1 : 0;
 	rx_status->nss = NSS_IDX_TO_NSS(mm81x_ratecode_nss_index_get(ratecode));
+	rx_status->rate_idx = mm81x_ratecode_mcs_index_get(ratecode);
+	rx_status->bw = mm81x_rx_h_rc_bw_to_rx_bw(ratecode);
+	rx_status->mactime = timestamp;
+	rx_status->flag |= RX_FLAG_MACTIME_IS_RTAP_TS64;
 
 	if (flags & MM81X_RX_STATUS_FLAGS_DECRYPTED)
 		rx_status->flag |= RX_FLAG_DECRYPTED;
 
-	rx_status->rate_idx = mm81x_ratecode_mcs_index_get(ratecode);
-	rx_status->bw = mm81x_rx_h_rc_bw_to_rx_bw(ratecode);
-
 	if (mm81x_ratecode_sgi_get(ratecode))
 		rx_status->enc_flags |= RX_ENC_FLAG_SHORT_GI;
+
+	if (mors->monitor_en) {
+		if (flags & MM81X_RX_STATUS_FLAGS_CRC_ERROR)
+			rx_status->flag |= RX_FLAG_FAILED_FCS_CRC;
+
+		if (flags & MM81X_RX_STATUS_FLAGS_AMPDU) {
+			rx_status->flag |= RX_FLAG_AMPDU_DETAILS |
+					   RX_FLAG_AMPDU_EOF_BIT_KNOWN;
+			rx_status->ampdu_reference =
+				mm81x_rx_h_ampdu_reference(mors, timestamp);
+
+			if (flags & MM81X_RX_STATUS_FLAGS_EOF)
+				rx_status->flag |= RX_FLAG_AMPDU_EOF_BIT;
+		}
+
+		if (flags & MM81X_RX_STATUS_FLAGS_NDP) {
+			rx_status->flag |= RX_FLAG_NO_PSDU;
+
+			/*
+			 * S1G PSDUs are not standardised in radiotap yet, so
+			 * for now report as sounding PSDUs so that acks etc.
+			 * can be passed through.
+			 */
+			rx_status->zero_length_psdu_type =
+				IEEE80211_RADIOTAP_ZERO_LEN_PSDU_SOUNDING;
+
+			/*
+			 * Null Data Packets contain no data, therefore no
+			 * mcs encoding. The STF/LTF are usually BPSK, therefore
+			 * the NDP mcs rate can always be considered as 0.
+			 */
+			rx_status->rate_idx = 0;
+			rx_status->nss = 1;
+		}
+	}
 }
 
 static void mm81x_rx_h_update_sta(struct ieee80211_sta *sta,
@@ -1983,7 +2118,6 @@ void mm81x_mac_rx_skb(struct mm81x *mors, struct sk_buff *skb,
 							       hdr->addr2;
 
 	mm81x_rx_h_fill_status(mors, hdr_rx_status, &rx_status, skb);
-	memcpy(IEEE80211_SKB_RXCB(skb), &rx_status, sizeof(rx_status));
 
 	scoped_guard(rcu) {
 		vif = mm81x_rx_h_skb_get_vif(mors, skb, hdr_rx_status);
@@ -1992,6 +2126,11 @@ void mm81x_mac_rx_skb(struct mm81x *mors, struct sk_buff *skb,
 			if (sta)
 				mm81x_rx_h_update_sta(sta, &rx_status);
 		}
+
+		if (mors->monitor_en)
+			mm81x_rx_h_add_rt_s1g_tlv(skb, hdr_rx_status, &rx_status);
+
+		memcpy(IEEE80211_SKB_RXCB(skb), &rx_status, sizeof(rx_status));
 
 		local_bh_disable();
 		ieee80211_rx_napi(hw, sta ? &sta->deflink : NULL, skb, NULL);
@@ -2263,9 +2402,6 @@ static int mm81x_mac_ops_add_interface(struct ieee80211_hw *hw,
 
 	rcu_assign_pointer(mors->vifs[mors_vif->id], vif);
 
-	if (vif->type == NL80211_IFTYPE_AP)
-		INIT_WORK(&mors_vif->u.ap.beacon_work, mm81x_mac_beacon_work);
-
 	ret = mm81x_cmd_get_capabilities(mors, mors_vif->id, &mors->fw_caps);
 	if (ret) {
 		dev_err(mors->dev,
@@ -2273,6 +2409,12 @@ static int mm81x_mac_ops_add_interface(struct ieee80211_hw *hw,
 			mors_vif->id);
 		return ret;
 	}
+
+	if (vif->type == NL80211_IFTYPE_MONITOR)
+		ieee80211_hw_set(hw, RX_INCLUDES_FCS);
+
+	if (vif->type == NL80211_IFTYPE_AP)
+		INIT_WORK(&mors_vif->u.ap.beacon_work, mm81x_mac_beacon_work);
 
 	ieee80211_wake_queues(mors->hw);
 	return ret;
@@ -2347,6 +2489,9 @@ static void mm81x_mac_config_hw(struct mm81x *mors)
 	hw->sta_data_size = sizeof(struct mm81x_sta);
 	hw->extra_tx_headroom =
 		sizeof(struct mm81x_skb_hdr) + mm81x_bus_get_alignment(mors);
+	hw->radiotap_timestamp.units_pos =
+		IEEE80211_RADIOTAP_TIMESTAMP_UNIT_US |
+		IEEE80211_RADIOTAP_TIMESTAMP_SPOS_BEGIN_MDPU;
 
 	mors->wiphy = hw->wiphy;
 
@@ -2361,6 +2506,7 @@ static void mm81x_mac_config_hw(struct mm81x *mors)
 	ieee80211_hw_set(hw, PS_NULLFUNC_STACK);
 	ieee80211_hw_set(hw, SUPPORTS_TX_FRAG);
 	ieee80211_hw_set(hw, SUPPORTS_NDP_BLOCKACK);
+	ieee80211_hw_set(hw, WANT_MONITOR_VIF);
 
 	SET_IEEE80211_PERM_ADDR(hw, mors->macaddr);
 
