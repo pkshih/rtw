@@ -1932,22 +1932,13 @@ static void mm81x_rx_h_fill_status(struct mm81x *mors,
 		rx_status->enc_flags |= RX_ENC_FLAG_SHORT_GI;
 }
 
-static void mm81x_rx_h_update_sta(struct ieee80211_vif *vif,
-				  struct ieee80211_hdr *hdr,
+static void mm81x_rx_h_update_sta(struct ieee80211_sta *sta,
 				  struct ieee80211_rx_status *rx_status)
 {
-	struct ieee80211_sta *sta;
-	struct mm81x_sta *msta;
-	u8 *lookup = ieee80211_is_s1g_beacon(hdr->frame_control) ? hdr->addr1 :
-								   hdr->addr2;
+	struct mm81x_sta *msta = (void *)sta->drv_priv;
 
 	lockdep_assert_in_rcu_read_lock();
 
-	sta = ieee80211_find_sta(vif, lookup);
-	if (!sta)
-		return;
-
-	msta = (void *)sta->drv_priv;
 	if (msta->avg_rssi) {
 		msta->avg_rssi =
 			CALC_AVG_RSSI(msta->avg_rssi, rx_status->signal);
@@ -1975,9 +1966,11 @@ void mm81x_mac_rx_skb(struct mm81x *mors, struct sk_buff *skb,
 		      struct mm81x_skb_rx_status *hdr_rx_status)
 {
 	struct ieee80211_vif *vif;
+	struct ieee80211_sta *sta = NULL;
 	struct ieee80211_hw *hw = mors->hw;
 	struct ieee80211_rx_status rx_status;
 	struct ieee80211_hdr *hdr = (void *)skb->data;
+	u8 *lookup;
 
 	memset(&rx_status, 0, sizeof(rx_status));
 
@@ -1986,19 +1979,24 @@ void mm81x_mac_rx_skb(struct mm81x *mors, struct sk_buff *skb,
 		return;
 	}
 
+	lookup = ieee80211_is_s1g_beacon(hdr->frame_control) ? hdr->addr1 :
+							       hdr->addr2;
+
 	mm81x_rx_h_fill_status(mors, hdr_rx_status, &rx_status, skb);
+	memcpy(IEEE80211_SKB_RXCB(skb), &rx_status, sizeof(rx_status));
 
 	scoped_guard(rcu) {
 		vif = mm81x_rx_h_skb_get_vif(mors, skb, hdr_rx_status);
-		if (!vif)
-			goto rx;
+		if (vif) {
+			sta = ieee80211_find_sta(vif, lookup);
+			if (sta)
+				mm81x_rx_h_update_sta(sta, &rx_status);
+		}
 
-		mm81x_rx_h_update_sta(vif, hdr, &rx_status);
+		local_bh_disable();
+		ieee80211_rx_napi(hw, sta ? &sta->deflink : NULL, skb, NULL);
+		local_bh_enable();
 	}
-
-rx:
-	memcpy(IEEE80211_SKB_RXCB(skb), &rx_status, sizeof(rx_status));
-	ieee80211_rx_ni(hw, skb);
 }
 
 static void mm81x_mac_flush_queues(struct mm81x *mors)
