@@ -84,7 +84,7 @@
 	.max_power = 30,					\
 }
 
-static struct ieee80211_channel mors_s1ghz_channels[] = {
+static const struct ieee80211_channel mors_s1ghz_channels[] = {
 	CHANS1G(1, 902, 500, IEEE80211_CHAN_S1G_NO_PRIMARY),
 	CHANS1G(3, 903, 500, 0),
 	CHANS1G(5, 904, 500, 0),
@@ -115,11 +115,9 @@ static struct ieee80211_channel mors_s1ghz_channels[] = {
 
 /* clang-format on */
 
-static struct ieee80211_supported_band mors_band_s1ghz = {
+static const struct ieee80211_supported_band mors_band_s1ghz = {
 	.band = NL80211_BAND_S1GHZ,
 	.s1g_cap.s1g = true,
-	.channels = mors_s1ghz_channels,
-	.n_channels = ARRAY_SIZE(mors_s1ghz_channels),
 	.bitrates = NULL,
 	.n_bitrates = 0,
 	.s1g_cap.cap[4] = 0x80 /* STA type sensor only for AP & STA */
@@ -269,8 +267,10 @@ static void mm81x_mac_check_fw_disabled_chans(struct ieee80211_hw *hw)
 	u32 i;
 	struct mm81x *mors = hw->priv;
 	struct host_cmd_resp_get_disabled_channels *resp;
+	struct ieee80211_supported_band *sband =
+		hw->wiphy->bands[NL80211_BAND_S1GHZ];
 	u32 resp_len = sizeof(struct host_cmd_disabled_channel_entry) *
-			       ARRAY_SIZE(mors_s1ghz_channels) +
+			       sband->n_channels +
 		       sizeof(*resp);
 
 	resp = kzalloc(resp_len, GFP_KERNEL);
@@ -283,13 +283,13 @@ static void mm81x_mac_check_fw_disabled_chans(struct ieee80211_hw *hw)
 	if (ret)
 		goto out;
 
-	if (le32_to_cpu(resp->n_channels) > ARRAY_SIZE(mors_s1ghz_channels)) {
+	if (le32_to_cpu(resp->n_channels) > sband->n_channels) {
 		ret = -EINVAL;
 		goto out;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(mors_s1ghz_channels); i++) {
-		struct ieee80211_channel *ch = &mors_s1ghz_channels[i];
+	for (i = 0; i < sband->n_channels; i++) {
+		struct ieee80211_channel *ch = &sband->channels[i];
 
 		if (ch->flags & IEEE80211_CHAN_DISABLED)
 			continue;
@@ -342,7 +342,8 @@ static int mm81x_tx_h_get_max_tx_bw(struct mm81x *mors)
 static void mm81x_mac_caps_init(struct mm81x *mors)
 {
 	struct mm81x_fw_caps *fw_caps = &mors->fw_caps;
-	struct ieee80211_sta_s1g_cap *s1g = &mors_band_s1ghz.s1g_cap;
+	struct ieee80211_sta_s1g_cap *s1g =
+		&mors->hw->wiphy->bands[NL80211_BAND_S1GHZ]->s1g_cap;
 
 #define __FW_CAP_N(_n, _cap, _bit)                \
 	do {                                      \
@@ -2476,7 +2477,6 @@ static void mm81x_mac_config_hw(struct mm81x *mors)
 	for (i = 0; i < NUM_NL80211_BANDS; i++)
 		hw->wiphy->bands[i] = NULL;
 
-	hw->wiphy->bands[NL80211_BAND_S1GHZ] = &mors_band_s1ghz;
 	hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_AP) |
 				     BIT(NL80211_IFTYPE_STATION);
 	hw->wiphy->reg_notifier = mm81x_reg_notifier;
@@ -2554,6 +2554,28 @@ static void mm81x_mac_stale_tx_status_timer_init(struct mm81x *mors)
 	timer_setup(&mors->stale_status.timer, mm81x_stale_tx_status_timer, 0);
 }
 
+static int mm81x_mac_set_sband(struct mm81x *mors)
+{
+	struct ieee80211_supported_band *sband;
+
+	sband = devm_kmemdup(mors->dev, &mors_band_s1ghz, sizeof(*sband),
+			     GFP_KERNEL);
+	if (!sband)
+		return -ENOMEM;
+
+	sband->channels = devm_kmemdup_array(mors->dev, mors_s1ghz_channels,
+					     ARRAY_SIZE(mors_s1ghz_channels),
+					     sizeof(*mors_s1ghz_channels),
+					     GFP_KERNEL);
+	if (!sband->channels)
+		return -ENOMEM;
+
+	sband->n_channels = ARRAY_SIZE(mors_s1ghz_channels);
+	mors->hw->wiphy->bands[NL80211_BAND_S1GHZ] = sband;
+
+	return 0;
+}
+
 int mm81x_mac_register(struct mm81x *mors)
 {
 	int ret;
@@ -2568,6 +2590,11 @@ int mm81x_mac_register(struct mm81x *mors)
 		return ret;
 
 	mm81x_mac_config_hw(mors);
+
+	ret = mm81x_mac_set_sband(mors);
+	if (ret)
+		return ret;
+
 	mm81x_mac_hw_scan_init(mors);
 	mm81x_mac_stale_tx_status_timer_init(mors);
 
