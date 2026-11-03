@@ -5837,6 +5837,7 @@ struct rtw89_chip_info {
 	bool support_sar_by_ant;
 	bool support_noise;
 	bool support_fw_cmd_ofld;
+	bool support_low_latency_lps;
 	bool ul_tb_waveform_ctrl;
 	bool ul_tb_pwr_diff;
 	bool rx_freq_from_ie;

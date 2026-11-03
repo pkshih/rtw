@@ -3006,7 +3006,7 @@ static bool rtw89_core_proto_stats_can_lps(struct rtw89_dev *rtwdev,
 					   struct rtw89_vif *rtwvif,
 					   enum rtw89_tfc_interval interval)
 {
-	if (rtwdev->chip->chip_id != RTL8852A)
+	if (!rtwdev->chip->support_low_latency_lps)
 		return true;
 
 	if (rtwvif->burst_active)
