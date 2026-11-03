@@ -2338,6 +2338,18 @@ struct rtw89_h2c_wow_payload_cam_update {
 	__le32 w8;
 } __packed;
 
+struct rtw89_h2c_lps_adv_parm {
+	__le32 w0;
+	__le32 w1;
+} __packed;
+
+#define RTW89_H2C_PS_ADV_PARM_W0_MACID GENMASK(7, 0)
+#define RTW89_H2C_PS_ADV_PARM_W0_TRX_TIMEOUT_TIME_SET GENMASK(9, 8)
+#define RTW89_H2C_PS_ADV_PARM_W0_EN_SMART_PS_DTIM_RX BIT(10)
+#define RTW89_H2C_PS_ADV_PARM_W0_EN_TRX_EXT_MODE BIT(11)
+#define RTW89_H2C_PS_ADV_PARM_W1_TRX_TIMEOUT_TIME_VAL GENMASK(7, 0)
+#define RTW89_H2C_PS_ADV_PARM_W1_EXTNUM GENMASK(15, 8)
+
 #define RTW89_H2C_WOW_PLD_CAM_UPD_W0_R_W BIT(0)
 #define RTW89_H2C_WOW_PLD_CAM_UPD_W0_IDX GENMASK(7, 1)
 #define RTW89_H2C_WOW_PLD_CAM_UPD_WKFM0 GENMASK(31, 0)
@@ -4800,6 +4812,7 @@ enum rtw89_ps_h2c_func {
 	H2C_FUNC_MAC_LPS_PARM		= 0x0,
 	H2C_FUNC_P2P_ACT		= 0x1,
 	H2C_FUNC_IPS_CFG		= 0x3,
+	H2C_FUNC_MAC_PS_ADVANCE_PARM	= 0x4,
 	H2C_FUNC_PS_POWER_LEVEL		= 0x7,
 	H2C_FUNC_TBTT_TUNING		= 0xA,
 
@@ -5636,6 +5649,8 @@ int rtw89_fw_h2c_init_ba_cam_users(struct rtw89_dev *rtwdev, u8 users,
 
 int rtw89_fw_h2c_lps_parm(struct rtw89_dev *rtwdev,
 			  struct rtw89_lps_parm *lps_param);
+int rtw89_fw_h2c_lps_adv_param(struct rtw89_dev *rtwdev,
+			       struct rtw89_vif_link *rtwvif_link);
 int rtw89_fw_h2c_lps_ch_info(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif);
 int rtw89_fw_h2c_lps_ml_cmn_info(struct rtw89_dev *rtwdev,
 				 struct rtw89_vif *rtwvif);
