@@ -715,6 +715,7 @@ void rtw89_regd_learn_queue(struct rtw89_dev *rtwdev)
 		4, 16, 64, 256, 1024, 4096,
 	};
 	struct wiphy *wiphy = rtwdev->hw->wiphy;
+	struct rtw89_hal *hal = &rtwdev->hal;
 	unsigned int delay;
 	unsigned int index;
 
@@ -724,6 +725,9 @@ void rtw89_regd_learn_queue(struct rtw89_dev *rtwdev)
 		return;
 
 	if (!regd_learn->shall_run)
+		return;
+
+	if (hal->disabled_dm_bitmap & BIT(RTW89_DM_REGD_LEARN))
 		return;
 
 	rtw89_debug(rtwdev, RTW89_DBG_REGD, "regd_learn: queue (retry=%u)\n",
