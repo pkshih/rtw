@@ -4268,6 +4268,7 @@ static void rtw89_pci_recalc_int_mit(struct rtw89_dev *rtwdev)
 	u32 val = 0;
 
 	if (rtwdev->scanning ||
+	    test_bit(RTW89_FLAG_REGD_LEARNING, rtwdev->flags) ||
 	    (tx_tfc_lv < RTW89_TFC_HIGH && rx_tfc_lv < RTW89_TFC_HIGH))
 		goto out;
 

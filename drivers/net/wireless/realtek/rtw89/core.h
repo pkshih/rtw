@@ -6127,6 +6127,7 @@ enum rtw89_fw_feature {
 	RTW89_FW_FEATURE_SER_POST_RECOVER_DMAC,
 	RTW89_FW_FEATURE_TX_HISTORY_V1,
 	RTW89_FW_FEATURE_NO_DRV_BT_TXRX_EN,
+	RTW89_FW_FEATURE_REGD_LEARN,
 
 	NUM_OF_RTW89_FW_FEATURES,
 };
@@ -6565,6 +6566,7 @@ enum rtw89_flags {
 	RTW89_FLAG_HW_RFKILL_STATE,
 	RTW89_FLAG_UNPLUGGED,
 	RTW89_FLAG_SHUTDOWN,
+	RTW89_FLAG_REGD_LEARNING,
 
 	NUM_OF_RTW89_FLAGS,
 };
@@ -7097,6 +7099,19 @@ struct rtw89_regd_data {
 struct rtw89_regd_ctrl {
 	unsigned int nr;
 	const struct rtw89_regd *map;
+};
+
+#define RTW89_REGD_LEARN_TIMEOUT 8
+#define RTW89_REGD_LEARN_CACHE_TTL 3600
+
+struct rtw89_regd_learn {
+	char hinted_alpha2[2];
+	bool can_activate;
+	bool shall_run;
+	unsigned long last_hint;
+	unsigned int retry;
+	struct wiphy_delayed_work work;
+	struct wiphy_delayed_work timeout_work;
 };
 
 #define RTW89_REGD_MAX_COUNTRY_NUM U8_MAX
@@ -7797,6 +7812,7 @@ struct rtw89_dev {
 	bool scanning;
 
 	struct rtw89_regulatory_info regulatory;
+	struct rtw89_regd_learn regd_learn;
 	struct rtw89_sar_info sar;
 	struct rtw89_tas_info tas;
 	struct rtw89_ant_gain_info ant_gain;
@@ -9541,6 +9557,11 @@ bool rtw89_legacy_rate_to_bitrate(struct rtw89_dev *rtwdev, u8 legacy_rate, u16 
 int rtw89_regd_setup(struct rtw89_dev *rtwdev);
 int rtw89_regd_init_hint(struct rtw89_dev *rtwdev);
 const char *rtw89_regd_get_string(enum rtw89_regulation_type regd);
+void rtw89_regd_learn_init(struct rtw89_dev *rtwdev);
+void rtw89_regd_learn_deinit(struct rtw89_dev *rtwdev, bool ser);
+void rtw89_regd_learn_queue(struct rtw89_dev *rtwdev);
+void rtw89_regd_learn_cancel(struct rtw89_dev *rtwdev);
+void rtw89_regd_learn_update(struct rtw89_dev *rtwdev, const char *alpha2, bool sync);
 void rtw89_traffic_stats_init(struct rtw89_dev *rtwdev,
 			      struct rtw89_traffic_stats *stats);
 struct rtw89_wait_response *

@@ -57,10 +57,17 @@ static void rtw89_ops_wake_tx_queue(struct ieee80211_hw *hw,
 static int rtw89_ops_start(struct ieee80211_hw *hw)
 {
 	struct rtw89_dev *rtwdev = hw->priv;
+	int ret;
 
 	lockdep_assert_wiphy(hw->wiphy);
 
-	return rtw89_core_start(rtwdev);
+	ret = rtw89_core_start(rtwdev);
+	if (ret)
+		return ret;
+
+	rtw89_regd_learn_init(rtwdev);
+
+	return 0;
 }
 
 static void rtw89_ops_stop(struct ieee80211_hw *hw, bool suspend)
@@ -68,6 +75,8 @@ static void rtw89_ops_stop(struct ieee80211_hw *hw, bool suspend)
 	struct rtw89_dev *rtwdev = hw->priv;
 
 	lockdep_assert_wiphy(hw->wiphy);
+
+	rtw89_regd_learn_deinit(rtwdev, false);
 
 	rtw89_core_stop(rtwdev);
 }
@@ -95,7 +104,8 @@ static int rtw89_ops_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
 
 	if ((changed & IEEE80211_CONF_CHANGE_IDLE) &&
 	    (hw->conf.flags & IEEE80211_CONF_IDLE) &&
-	    !rtwdev->scanning)
+	    !rtwdev->scanning &&
+	    !test_bit(RTW89_FLAG_REGD_LEARNING, rtwdev->flags))
 		rtw89_enter_ips(rtwdev);
 
 	if (changed & IEEE80211_CONF_CHANGE_MONITOR)
@@ -1298,6 +1308,9 @@ static int rtw89_ops_hw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		return -EBUSY;
 	}
 
+	if (test_bit(RTW89_FLAG_REGD_LEARNING, rtwdev->flags))
+		return -EAGAIN;
+
 	if (rtwdev->scanning || rtwvif->offchan)
 		return -EBUSY;
 
@@ -1413,6 +1426,8 @@ static int rtw89_ops_assign_vif_chanctx(struct ieee80211_hw *hw,
 		return -ENOLINK;
 	}
 
+	rtw89_regd_learn_deinit(rtwdev, false);
+
 	return rtw89_chanctx_ops_assign_vif(rtwdev, rtwvif_link, ctx);
 }
 
@@ -1436,6 +1451,9 @@ static void rtw89_ops_unassign_vif_chanctx(struct ieee80211_hw *hw,
 	}
 
 	rtw89_chanctx_ops_unassign_vif(rtwdev, rtwvif_link, ctx);
+
+	if (rtw89_no_active_rtwvif(rtwdev))
+		rtw89_regd_learn_init(rtwdev);
 }
 
 static
@@ -1737,6 +1755,9 @@ int rtw89_ops_change_vif_links(struct ieee80211_hw *hw,
 		rcu_assign_pointer(rtwvif->snap_link_confs, snap);
 	}
 
+	/* might enter ips without defer work */
+	rtw89_regd_learn_cancel(rtwdev);
+
 	/* might depend on @snap; don't change order */
 	rtw89_leave_ips_by_hwflags(rtwdev);
 
@@ -1780,6 +1801,9 @@ int rtw89_ops_change_vif_links(struct ieee80211_hw *hw,
 		rtw89_vif_update_fw_links(rtwdev, rtwvif, new_links, false);
 
 	rtw89_enter_ips_by_hwflags(rtwdev);
+
+	rtw89_regd_learn_queue(rtwdev);
+
 	return ret;
 }
 

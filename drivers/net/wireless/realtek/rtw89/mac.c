@@ -5420,6 +5420,7 @@ rtw89_mac_bcn_fltr_rpt(struct rtw89_dev *rtwdev, struct rtw89_vif_link *rtwvif_l
 	switch (type) {
 	case RTW89_BCN_FLTR_BEACON_LOSS:
 		if (!rtwdev->scanning && !rtwvif->offchan &&
+		    !test_bit(RTW89_FLAG_REGD_LEARNING, rtwdev->flags) &&
 		    !rtwvif_link->noa_once.in_duration) {
 			start_detect = rtw89_mcc_detect_go_bcn(rtwdev, rtwvif_link);
 			if (start_detect)
@@ -6069,6 +6070,47 @@ out:
 	rcu_read_unlock();
 }
 
+static void
+rtw89_mac_c2h_regd_learn(struct rtw89_dev *rtwdev, struct sk_buff *skb, u32 len)
+{
+	const struct rtw89_c2h_regd_learn *c2h =
+		(const struct rtw89_c2h_regd_learn *)skb->data;
+	const struct rtw89_fw_c2h_attr *attr = RTW89_SKB_C2H_CB(skb);
+	const char *res;
+	char alpha2[2];
+	u8 status;
+
+	if (len < sizeof(*c2h))
+		return;
+
+	if (attr->ignore)
+		return;
+
+	if (!test_bit(RTW89_FLAG_REGD_LEARNING, rtwdev->flags))
+		return;
+
+	status = le32_get_bits(c2h->w2, RTW89_C2H_REGD_LEARN_W2_STATUS);
+	alpha2[0] = le32_get_bits(c2h->w2, RTW89_C2H_REGD_LEARN_W2_COUNTRY_0);
+	alpha2[1] = le32_get_bits(c2h->w2, RTW89_C2H_REGD_LEARN_W2_COUNTRY_1);
+
+	switch (status) {
+	case RTW89_C2H_REGD_LEARN_NONE:
+		rtw89_debug(rtwdev, RTW89_DBG_REGD,
+			    "regd_learn: c2h none\n");
+		res = NULL;
+		break;
+	case RTW89_C2H_REGD_LEARN_LEARNED:
+	case RTW89_C2H_REGD_LEARN_VERIFIED:
+		res = alpha2;
+		break;
+	default:
+		rtw89_warn(rtwdev, "regd_learn: c2h unknown (status=%d)\n", status);
+		return;
+	}
+
+	rtw89_regd_learn_update(rtwdev, res, true);
+}
+
 static
 void (* const rtw89_mac_c2h_ofld_handler[])(struct rtw89_dev *rtwdev,
 					    struct sk_buff *c2h, u32 len) = {
@@ -6081,6 +6123,7 @@ void (* const rtw89_mac_c2h_ofld_handler[])(struct rtw89_dev *rtwdev,
 	[RTW89_MAC_C2H_FUNC_TX_DUTY_RPT] = rtw89_mac_c2h_tx_duty_rpt,
 	[RTW89_MAC_C2H_FUNC_TSF32_TOGL_RPT] = rtw89_mac_c2h_tsf32_toggle_rpt,
 	[RTW89_MAC_C2H_FUNC_BCNFLTR_RPT] = rtw89_mac_c2h_bcn_fltr_rpt,
+	[RTW89_MAC_C2H_FUNC_REGD_LEARN] = rtw89_mac_c2h_regd_learn,
 };
 
 static
@@ -6168,6 +6211,29 @@ static void rtw89_mac_c2h_scanofld_rsp_atomic(struct rtw89_dev *rtwdev,
 	}
 }
 
+static void rtw89_mac_c2h_regd_learn_atomic(struct rtw89_dev *rtwdev,
+					    struct sk_buff *skb)
+{
+	const struct rtw89_c2h_regd_learn *c2h =
+		(const struct rtw89_c2h_regd_learn *)skb->data;
+	struct rtw89_wait_info *fw_ofld_wait = &rtwdev->mac.fw_ofld_wait;
+	struct rtw89_fw_c2h_attr *attr = RTW89_SKB_C2H_CB(skb);
+	struct rtw89_completion_data data = {};
+	u8 status;
+
+	if (attr->len < sizeof(*c2h))
+		return;
+
+	status = le32_get_bits(c2h->w2, RTW89_C2H_REGD_LEARN_W2_STATUS);
+	if (status != RTW89_C2H_REGD_LEARN_ABORT)
+		return;
+
+	rtw89_complete_cond(fw_ofld_wait, RTW89_FW_OFLD_WAIT_COND_REGD_LEARN_ABORT,
+			    &data);
+
+	attr->ignore = true;
+}
+
 bool rtw89_mac_c2h_chk_atomic(struct rtw89_dev *rtwdev, struct sk_buff *c2h,
 			      u8 class, u8 func)
 {
@@ -6191,6 +6257,9 @@ bool rtw89_mac_c2h_chk_atomic(struct rtw89_dev *rtwdev, struct sk_buff *c2h,
 			return false;
 		case RTW89_MAC_C2H_FUNC_PKT_OFLD_RSP:
 			return true;
+		case RTW89_MAC_C2H_FUNC_REGD_LEARN:
+			rtw89_mac_c2h_regd_learn_atomic(rtwdev, c2h);
+			return false;
 		}
 	case RTW89_MAC_C2H_CLASS_MCC:
 		return true;

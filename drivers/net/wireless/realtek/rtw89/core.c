@@ -5026,6 +5026,8 @@ void rtw89_roc_start(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
 
 	lockdep_assert_wiphy(hw->wiphy);
 
+	rtw89_regd_learn_cancel(rtwdev);
+
 	rtw89_leave_ips_by_hwflags(rtwdev);
 	rtw89_leave_lps(rtwdev);
 
@@ -5115,6 +5117,8 @@ void rtw89_roc_end(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
 	if (hw->conf.flags & IEEE80211_CONF_IDLE)
 		wiphy_delayed_work_queue(hw->wiphy, &roc->roc_work,
 					 msecs_to_jiffies(RTW89_ROC_IDLE_TIMEOUT));
+
+	rtw89_regd_learn_queue(rtwdev);
 }
 
 void rtw89_roc_work(struct wiphy *wiphy, struct wiphy_work *work)

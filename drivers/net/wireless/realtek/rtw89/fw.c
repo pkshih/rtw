@@ -993,6 +993,7 @@ static const struct __fw_feat_cfg fw_feat_tbl[] = {
 	__CFG_FW_FEAT(RTL8852C, ge, 0, 27, 128, 0, LPS_DACK_BY_C2H_REG),
 	__CFG_FW_FEAT(RTL8852C, ge, 0, 27, 128, 0, CRASH_TRIGGER_TYPE_1),
 	__CFG_FW_FEAT(RTL8852C, ge, 0, 27, 129, 1, BEACON_TRACKING),
+	__CFG_FW_FEAT(RTL8852C, ge, 0, 27, 138, 1, REGD_LEARN),
 	__CFG_FW_FEAT(RTL8852C, ge, 0, 29, 94, 0, SER_L1_BY_EVENT),
 	__CFG_FW_FEAT(RTL8852C, ge, 0, 29, 130, 0, SIM_SER_L0L1_BY_HALT_H2C),
 	__CFG_FW_FEAT(RTL8922A, ge, 0, 0, 0, 0, RFK_PRE_NOTIFY_V0),
@@ -1045,6 +1046,7 @@ static const struct __fw_feat_cfg fw_feat_tbl[] = {
 	__CFG_FW_FEAT(RTL8922D, lt, 0, 35, 113, 2, SCAN_OFFLOAD_BE_V2),
 	__CFG_FW_FEAT(RTL8922D, ge, 0, 35, 119, 0, LPS_ML_INFO_V1_EXTRA),
 	__CFG_FW_FEAT(RTL8922D, lt, 0, 35, 119, 0, CH_INFO_BE_V1),
+	__CFG_FW_FEAT(RTL8922D, ge, 0, 35, 119, 2, REGD_LEARN),
 	__CFG_FW_FEAT(RTL8922D, lt, 0, 35, 119, 3, NO_DRV_BT_TXRX_EN),
 };
 
@@ -11167,6 +11169,47 @@ int rtw89_hw_scan_offload(struct rtw89_dev *rtwdev,
 
 out:
 	return ret;
+}
+
+int rtw89_fw_h2c_regd_learn(struct rtw89_dev *rtwdev, const char *dflt)
+{
+	struct rtw89_wait_info *wait = &rtwdev->mac.fw_ofld_wait;
+	struct rtw89_h2c_regd_learn *h2c;
+	u32 len = sizeof(*h2c);
+	struct sk_buff *skb;
+	bool abort = !dflt;
+	int ret;
+
+	skb = rtw89_fw_h2c_alloc_skb_with_hdr(rtwdev, len);
+	if (!skb) {
+		rtw89_err(rtwdev, "failed to alloc skb for regd_learn\n");
+		return -ENOMEM;
+	}
+
+	skb_put(skb, len);
+	h2c = (struct rtw89_h2c_regd_learn *)skb->data;
+	h2c->w0 = le32_encode_bits(abort ? 0 : dflt[0],
+				   RTW89_H2C_REGD_LEARN_W0_COUNTRY_0) |
+		  le32_encode_bits(abort ? 0 : dflt[1],
+				   RTW89_H2C_REGD_LEARN_W0_COUNTRY_1) |
+		  le32_encode_bits(abort, RTW89_H2C_REGD_LEARN_W0_ABORT);
+
+	rtw89_h2c_pkt_set_hdr(rtwdev, skb, FWCMD_TYPE_H2C,
+			      H2C_CAT_MAC, H2C_CL_MAC_FW_OFLD,
+			      H2C_FUNC_REGD_LEARN, 0, 0, len);
+
+	if (abort)
+		return rtw89_h2c_tx_and_wait(rtwdev, skb, wait,
+					     RTW89_FW_OFLD_WAIT_COND_REGD_LEARN_ABORT);
+
+	ret = rtw89_h2c_tx(rtwdev, skb, false);
+	if (ret) {
+		rtw89_err(rtwdev, "failed to send regd_learn h2c\n");
+		dev_kfree_skb_any(skb);
+		return ret;
+	}
+
+	return 0;
 }
 
 #define H2C_FW_CPU_EXCEPTION_TYPE_0 0x5566
