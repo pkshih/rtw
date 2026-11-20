@@ -488,8 +488,6 @@ static unsigned int _rtl_rx_get_padding(struct ieee80211_hdr *hdr,
 #endif
 }
 
-#define __RADIO_TAP_SIZE_RSV	32
-
 static void _rtl_rx_completed(struct urb *_urb)
 {
 	struct rtl_usb *rtlusb = (struct rtl_usb *)_urb->context;
@@ -521,7 +519,7 @@ static void _rtl_rx_completed(struct urb *_urb)
 		hdr = (void *)(_urb->transfer_buffer + RTL_RX_DESC_SIZE);
 		padding = _rtl_rx_get_padding(hdr, size - RTL_RX_DESC_SIZE);
 
-		skb = dev_alloc_skb(size + __RADIO_TAP_SIZE_RSV + padding);
+		skb = dev_alloc_skb(size + RTL_RADIO_TAP_SIZE_RSV + padding);
 		if (!skb) {
 			pr_err("Can't allocate skb for bulk IN!\n");
 			goto resubmit;
@@ -533,7 +531,7 @@ static void _rtl_rx_completed(struct urb *_urb)
 		skb_reserve(skb, padding);
 
 		/* reserve some space for mac80211's radiotap */
-		skb_reserve(skb, __RADIO_TAP_SIZE_RSV);
+		skb_reserve(skb, RTL_RADIO_TAP_SIZE_RSV);
 
 		skb_put_data(skb, _urb->transfer_buffer, size);
 
@@ -569,8 +567,6 @@ free:
 	 */
 	usb_anchor_urb(_urb, &rtlusb->rx_cleanup_urbs);
 }
-
-#undef __RADIO_TAP_SIZE_RSV
 
 static void _rtl_usb_cleanup_rx(struct ieee80211_hw *hw)
 {
