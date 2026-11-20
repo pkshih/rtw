@@ -329,6 +329,7 @@
 
 #define REG_USB_Queue_Select_MAC0	0xFE44
 #define REG_USB_Queue_Select_MAC1	0xFE47
+#define REG_USB_DMA_AGG_TO		0xFE5B
 
 /* ----------------------------------------------------- */
 /*	Redifine 8192C register definition for compatibility */
@@ -939,6 +940,9 @@
 #define MACRXEN					BIT(7)
 #define ENSWBCN					BIT(8)
 #define ENSEC					BIT(9)
+
+/* REG_TRXDMA_CTRL */
+#define RXDMA_AGG_EN				BIT(2)
 
 #define HQSEL_VOQ				BIT(0)
 #define HQSEL_VIQ				BIT(1)
