@@ -5325,11 +5325,11 @@ static ssize_t rtw89_mac_diag_iter_all(struct rtw89_dev *rtwdev,
 			break;
 		}
 
+		prev_seq = seq;
+		prev_sheet = sheet;
 next:
 		n_plains++;
 		rule += rh->len * 4;
-		prev_seq = seq;
-		prev_sheet = sheet;
 	}
 
 	if (positive_bmp) {
