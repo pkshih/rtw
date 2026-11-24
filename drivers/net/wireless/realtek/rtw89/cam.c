@@ -514,7 +514,10 @@ int rtw89_cam_sec_key_add(struct rtw89_dev *rtwdev,
 		ext_key = true;
 		break;
 	case WLAN_CIPHER_SUITE_AES_CMAC:
+		if (!chip->hw_bip_tx_encrypt && vif->type != NL80211_IFTYPE_STATION)
+			return -EOPNOTSUPP;
 		hw_key_type = RTW89_SEC_KEY_TYPE_BIP_CCMP128;
+		key->flags |= IEEE80211_KEY_FLAG_GENERATE_MMIE;
 		break;
 	default:
 		return -EOPNOTSUPP;

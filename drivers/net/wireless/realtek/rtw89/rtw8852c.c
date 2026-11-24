@@ -3230,6 +3230,7 @@ const struct rtw89_chip_info rtw8852c_chip_info = {
 	.rx_freq_from_ie	= false,
 	.hw_sec_hdr		= true,
 	.hw_mgmt_tx_encrypt	= true,
+	.hw_bip_tx_encrypt	= false,
 	.hw_tkip_crypto		= true,
 	.hw_mlo_bmc_crypto	= false,
 	.rf_path_num		= 2,

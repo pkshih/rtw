@@ -716,6 +716,7 @@ rtw89_core_tx_update_sec_key(struct rtw89_dev *rtwdev,
 	struct rtw89_tx_desc_info *desc_info = &tx_req->desc_info;
 	struct sk_buff *skb = tx_req->skb;
 	u8 sec_type = RTW89_SEC_KEY_TYPE_NONE;
+	bool inc_pn = true;
 	u8 sec_cam_idx;
 	u64 pn64;
 
@@ -750,6 +751,10 @@ rtw89_core_tx_update_sec_key(struct rtw89_dev *rtwdev,
 	case WLAN_CIPHER_SUITE_GCMP_256:
 		sec_type = RTW89_SEC_KEY_TYPE_GCMP256;
 		break;
+	case WLAN_CIPHER_SUITE_AES_CMAC:
+		sec_type = RTW89_SEC_KEY_TYPE_BIP_CCMP128;
+		inc_pn = false;
+		break;
 	default:
 		rtw89_warn(rtwdev, "key cipher not supported %d\n", key->cipher);
 		return;
@@ -763,7 +768,11 @@ rtw89_core_tx_update_sec_key(struct rtw89_dev *rtwdev,
 	if (!chip->hw_sec_hdr)
 		return;
 
-	pn64 = atomic64_inc_return(&key->tx_pn);
+	if (inc_pn)
+		pn64 = atomic64_inc_return(&key->tx_pn);
+	else
+		pn64 = atomic64_read(&key->tx_pn);
+
 	desc_info->sec_seq[0] = pn64;
 	desc_info->sec_seq[1] = pn64 >> 8;
 	desc_info->sec_seq[2] = pn64 >> 16;
@@ -926,6 +935,20 @@ u8 rtw89_core_get_ch_dma_v2(struct rtw89_dev *rtwdev, u8 qsel)
 }
 EXPORT_SYMBOL(rtw89_core_get_ch_dma_v2);
 
+static void rtw89_core_tx_trim_bip_mic(struct rtw89_dev *rtwdev,
+				       struct rtw89_core_tx_request *tx_req,
+				       struct ieee80211_key_conf *key)
+{
+	const size_t mic_len = sizeof_field(struct ieee80211_mmie, mic);
+	struct sk_buff *skb = tx_req->skb;
+
+	if (key->cipher != WLAN_CIPHER_SUITE_AES_CMAC)
+		return;
+
+	skb_trim(skb, skb->len - mic_len);
+	tx_req->desc_info.pkt_size = skb->len;
+}
+
 static void
 rtw89_core_tx_update_mgmt_info(struct rtw89_dev *rtwdev,
 			       struct rtw89_core_tx_request *tx_req)
@@ -936,6 +959,7 @@ rtw89_core_tx_update_mgmt_info(struct rtw89_dev *rtwdev,
 	const struct rtw89_chan *chan = rtw89_chan_get(rtwdev,
 						       rtwvif_link->chanctx_idx);
 	struct sk_buff *skb = tx_req->skb;
+	struct ieee80211_key_conf *key;
 	u8 qsel, ch_dma;
 
 	qsel = rtw89_core_get_qsel_mgmt(rtwdev, tx_req);
@@ -955,10 +979,15 @@ rtw89_core_tx_update_mgmt_info(struct rtw89_dev *rtwdev,
 	desc_info->dis_data_fb = true;
 	desc_info->data_rate = rtw89_core_get_mgmt_rate(rtwdev, tx_req, chan);
 
-	if (chip->hw_mgmt_tx_encrypt && IEEE80211_SKB_CB(skb)->control.hw_key) {
+	key = IEEE80211_SKB_CB(skb)->control.hw_key;
+
+	if (chip->hw_mgmt_tx_encrypt && key) {
 		rtw89_core_tx_update_sec_key(rtwdev, tx_req);
 		rtw89_core_tx_update_llc_hdr(rtwdev, desc_info, skb);
 	}
+
+	if (chip->hw_bip_tx_encrypt && key)
+		rtw89_core_tx_trim_bip_mic(rtwdev, tx_req, key);
 
 	rtw89_debug(rtwdev, RTW89_DBG_TXRX,
 		    "tx mgmt frame with rate 0x%x on channel %d (band %d, bw %d)\n",
