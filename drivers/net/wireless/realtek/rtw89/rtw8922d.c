@@ -1857,23 +1857,23 @@ static void rtw8922d_path_diff_update(struct rtw89_dev *rtwdev,
 	else
 		ewma_path_diff_add(&bb->path_diff.avg, bb->path_diff.raw);
 
-	rtw89_phy_write32_mask(rtwdev, R_CL_MODE_TRIG_BE4, B_CL_MODE_TRIG_BE4, 1);
-	rtw89_phy_write32_mask(rtwdev, R_CL_MODE_TRIG_BE4, B_CL_MODE_TRIG_BE4, 0);
+	rtw89_phy_write32_idx(rtwdev, R_CL_MODE_TRIG_BE4, B_CL_MODE_TRIG_BE4, 1, phy_idx);
+	rtw89_phy_write32_idx(rtwdev, R_CL_MODE_TRIG_BE4, B_CL_MODE_TRIG_BE4, 0, phy_idx);
 
 	bf_smo_lmt = ewma_path_diff_read(&bb->path_diff.avg) < BF_SMOOTH_TH;
 	bb->path_diff.bf_smo_en = !bf_smo_lmt;
 
-	rtw89_phy_write32_mask(rtwdev, R_BF_SMO_PDP_LMT_EHT_BE4,
-			       B_BF_SMO_PDP_LMT_EHT_BE4, bf_smo_lmt);
-	rtw89_phy_write32_mask(rtwdev, R_BF_SMO_PDP_LMT_HE_BE4,
-			       B_BF_SMO_PDP_LMT_HE_BE4, bf_smo_lmt);
-	rtw89_phy_write32_mask(rtwdev, R_BF_SMO_PDP_LMT_VHT_BE4,
-			       B_BF_SMO_PDP_LMT_VHT_BE4, bf_smo_lmt);
+	rtw89_phy_write32_idx(rtwdev, R_BF_SMO_PDP_LMT_EHT_BE4,
+			      B_BF_SMO_PDP_LMT_EHT_BE4, bf_smo_lmt, phy_idx);
+	rtw89_phy_write32_idx(rtwdev, R_BF_SMO_PDP_LMT_HE_BE4,
+			      B_BF_SMO_PDP_LMT_HE_BE4, bf_smo_lmt, phy_idx);
+	rtw89_phy_write32_idx(rtwdev, R_BF_SMO_PDP_LMT_VHT_BE4,
+			      B_BF_SMO_PDP_LMT_VHT_BE4, bf_smo_lmt, phy_idx);
 
-	rtw89_phy_write32_mask(rtwdev, R_OS_TRIG_BY_SW_BE4,
-			       B_OS_TRIG_BY_SW_BE4, !bf_smo_lmt);
-	rtw89_phy_write32_mask(rtwdev, R_OS_TRIG_SOURCE_BE4,
-			       B_OS_TRIG_SOURCE_BE4, !bf_smo_lmt);
+	rtw89_phy_write32_idx(rtwdev, R_OS_TRIG_BY_SW_BE4,
+			      B_OS_TRIG_BY_SW_BE4, !bf_smo_lmt, phy_idx);
+	rtw89_phy_write32_idx(rtwdev, R_OS_TRIG_SOURCE_BE4,
+			      B_OS_TRIG_SOURCE_BE4, !bf_smo_lmt, phy_idx);
 
 	rtw89_entity_get_conf(rtwdev, &conf);
 	chan = conf.chans[phy_idx];
@@ -1882,8 +1882,8 @@ static void rtw8922d_path_diff_update(struct rtw89_dev *rtwdev,
 			sel_tone = he_eht_sel_tone[chan->band_width];
 		else if (bb->path_diff.link_mode == 1)
 			sel_tone = vht_sel_tone[chan->band_width];
-		rtw89_phy_write32_mask(rtwdev, R_SELECTED_TONE_IDX_BE4,
-				       B_SELECTED_TONE_IDX_BE4, sel_tone);
+		rtw89_phy_write32_idx(rtwdev, R_SELECTED_TONE_IDX_BE4,
+				      B_SELECTED_TONE_IDX_BE4, sel_tone, phy_idx);
 	}
 
 	rtw89_debug(rtwdev, RTW89_DBG_PHY_TRACK,
